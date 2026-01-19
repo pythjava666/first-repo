@@ -1,5 +1,11 @@
 #include "FT64F0AX.h"
 
+// ============ 定义 ============
+// 速度等级定义
+#define MIN_SPEED  1      // 最快
+#define MAX_SPEED  10     // 最慢
+#define DEFAULT_SPEED 3   // 默认速度
+
 // 共阳极LED模式数组
 const unsigned char led_patterns_common_anode[] = {
     0xFE,  // 11111110 - PB0亮 (输出0)，其他灭
@@ -13,13 +19,16 @@ const unsigned char led_patterns_common_anode[] = {
 };
 
 // 全局变量
-unsigned char led_position = 0;      // 当前LED位置
+unsigned char run_speed = DEFAULT_SPEED;  // 当前速度等级
+unsigned char led_position = 0;           // 当前LED位置
 
 // 函数声明
 void POWER_INITIAL(void);
 void GPIO_INITIAL(void);
+void Process_Keys(void);
+unsigned int Get_Delay_Time(void);
 
-// 主函数
+// ============ 主函数 ============
 void main(void)
 {
     // 1. 初始化
@@ -28,12 +37,19 @@ void main(void)
     
     // 2. 初始显示 - 共阳极：只有第一个灯亮
     led_position = 0;
-    PORTB = led_patterns_common_anode[0];  // 11111110 - 只有PB0亮
+    PORTB = led_patterns_common_anode[0];
     
-    // 3. 主循环 - 实现简单的流水灯
+    // 3. 主循环
     while(1)
     {
-        unsigned int delay_time = 20000;  // 固定延时
+        unsigned int delay_time;
+        
+        // ============ 按键处理 ============
+        Process_Keys();
+        
+        // ============ 流水灯控制 ============
+        // 根据速度等级获取延时时间
+        delay_time = Get_Delay_Time();
         
         // 延时
         for(volatile unsigned long i=0; i<delay_time; i++);
@@ -43,12 +59,12 @@ void main(void)
         if(led_position >= 8)
             led_position = 0;
         
-        // 更新显示 - 使用共阳极模式
+        // 更新显示
         PORTB = led_patterns_common_anode[led_position];
     }
 }
 
-// 电源和GPIO初始化
+// ============ 电源和GPIO初始化 ============
 void POWER_INITIAL(void)
 {
     // 时钟配置：使用内部振荡器
@@ -66,14 +82,145 @@ void GPIO_INITIAL(void)
     // FT64F0AX只有ANSELA，没有ANSELB和ANSELC
     ANSELA = 0x00;  // 关闭PA口的模拟功能
     
-    // 设置方向：PA口暂时不关心，PB全部输出
-    TRISA = 0x00;   // PA全部输出（暂时）
+    // 设置方向：PA5和PA4为输入（按键），PB全部输出
+    TRISA = 0x30;   // PA5和PA4为输入(00110000)，其他输出
     TRISB = 0x00;   // PB全部输出
     
     // 初始输出 - 共阳极：初始所有灯灭（输出1）
-    PORTA = 0x00;   // PA口输出0
+    PORTA = 0x00;
     PORTB = 0xFF;   // 所有输出1，LED灭
     
-    // 延时确保稳定
+    // 按键上拉 - 使能PA5和PA4的内部上拉电阻
+    WPUA = 0x30;    // PA5和PA4上拉(00110000)
+    
+    // 短暂延时确保稳定
     for(volatile int i=0; i<1000; i++);
+}
+
+// ============ 按键处理函数 ============
+void Process_Keys(void)
+{
+    // PA5: 加速键，PA4: 减速键
+    
+    // 加速键（PA5）按下
+    if (PA5 == 0)
+    {
+        // 短延时消抖
+        for(volatile int d=0; d<2000; d++);
+        
+        // 再次检测，确认按键按下
+        if (PA5 == 0)
+        {
+            // 加速（数值越小速度越快）
+            if (run_speed > MIN_SPEED)
+            {
+                run_speed--;
+                
+                // 加速提示：短暂全亮
+                PORTB = 0x00;  // 全亮（所有输出0）
+                for(volatile int d=0; d<3000; d++);
+                PORTB = led_patterns_common_anode[led_position];  // 恢复当前灯
+            }
+            
+            // 等待按键释放
+            while(PA5 == 0)
+            {
+                // 长按快速调节
+                for(volatile long d=0; d<20000; d++);
+                if (PA5 == 0 && run_speed > MIN_SPEED)
+                {
+                    run_speed--;
+                    PORTB = 0x00;  // 全亮提示
+                    for(volatile int d=0; d<1000; d++);
+                    PORTB = led_patterns_common_anode[led_position];  // 恢复
+                }
+            }
+        }
+    }
+    
+    // 减速键（PA4）按下
+    if (PA4 == 0)
+    {
+        // 短延时消抖
+        for(volatile int d=0; d<2000; d++);
+        
+        // 再次检测，确认按键按下
+        if (PA4 == 0)
+        {
+            // 减速（数值越大速度越慢）
+            if (run_speed < MAX_SPEED)
+            {
+                run_speed++;
+                
+                // 减速提示：短暂全灭
+                PORTB = 0xFF;  // 全灭（所有输出1）
+                for(volatile int d=0; d<3000; d++);
+                PORTB = led_patterns_common_anode[led_position];  // 恢复当前灯
+            }
+            
+            // 等待按键释放
+            while(PA4 == 0)
+            {
+                // 长按快速调节
+                for(volatile long d=0; d<20000; d++);
+                if (PA4 == 0 && run_speed < MAX_SPEED)
+                {
+                    run_speed++;
+                    PORTB = 0xFF;  // 全灭提示
+                    for(volatile int d=0; d<1000; d++);
+                    PORTB = led_patterns_common_anode[led_position];  // 恢复
+                }
+            }
+        }
+    }
+}
+
+// ============ 获取延时时间函数 ============
+unsigned int Get_Delay_Time(void)
+{
+    // 根据速度等级返回不同的延时时间
+    // 速度等级1最快，10最慢
+    switch(run_speed)
+    {
+        case 1:  return 5000;    // 最快
+        case 2:  return 10000;
+        case 3:  return 15000;   // 默认
+        case 4:  return 20000;
+        case 5:  return 25000;
+        case 6:  return 30000;
+        case 7:  return 35000;
+        case 8:  return 40000;
+        case 9:  return 45000;
+        case 10: return 50000;   // 最慢
+        default: return 15000;   // 默认值
+    }
+}
+
+// ============ LED测试函数（可选） ============
+void Test_LEDs(void)
+{
+    // 全亮测试（共阳极：输出0）
+    PORTB = 0x00;
+    for(volatile long i=0; i<30000; i++);
+    
+    // 全灭测试（共阳极：输出1）
+    PORTB = 0xFF;
+    for(volatile long i=0; i<30000; i++);
+    
+    // 测试从左向右流动
+    for(int i=7; i>=0; i--)
+    {
+        PORTB = led_patterns_common_anode[i];
+        for(volatile long d=0; d<15000; d++);
+    }
+    
+    // 测试从右向左流动
+    for(int i=0; i<8; i++)
+    {
+        PORTB = led_patterns_common_anode[i];
+        for(volatile long d=0; d<15000; d++);
+    }
+    
+    PORTB = 0xFF;  // 全灭
+    for(volatile long i=0; i<30000; i++);
 }
