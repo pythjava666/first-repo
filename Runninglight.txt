@@ -1,1 +1,79 @@
-Runninglight0222
+#include "FT64F0AX.h"
+
+// 共阳极LED模式数组
+const unsigned char led_patterns_common_anode[] = {
+    0xFE,  // 11111110 - PB0亮 (输出0)，其他灭
+    0xFD,  // 11111101 - PB1亮
+    0xFB,  // 11111011 - PB2亮
+    0xF7,  // 11110111 - PB3亮
+    0xEF,  // 11101111 - PB4亮
+    0xDF,  // 11011111 - PB5亮
+    0xBF,  // 10111111 - PB6亮
+    0x7F   // 01111111 - PB7亮
+};
+
+// 全局变量
+unsigned char led_position = 0;      // 当前LED位置
+
+// 函数声明
+void POWER_INITIAL(void);
+void GPIO_INITIAL(void);
+
+// 主函数
+void main(void)
+{
+    // 1. 初始化
+    POWER_INITIAL();
+    GPIO_INITIAL();
+    
+    // 2. 初始显示 - 共阳极：只有第一个灯亮
+    led_position = 0;
+    PORTB = led_patterns_common_anode[0];  // 11111110 - 只有PB0亮
+    
+    // 3. 主循环 - 实现简单的流水灯
+    while(1)
+    {
+        unsigned int delay_time = 20000;  // 固定延时
+        
+        // 延时
+        for(volatile unsigned long i=0; i<delay_time; i++);
+        
+        // 更新LED位置（从右向左流动：PB0 → PB1 → ... → PB7）
+        led_position++;
+        if(led_position >= 8)
+            led_position = 0;
+        
+        // 更新显示 - 使用共阳极模式
+        PORTB = led_patterns_common_anode[led_position];
+    }
+}
+
+// 电源和GPIO初始化
+void POWER_INITIAL(void)
+{
+    // 时钟配置：使用内部振荡器
+    OSCCON = 0B01100001;
+    
+    // 关闭所有中断
+    INTCON = 0x00;
+    
+    // 关闭看门狗
+    WDTCON = 0x00;
+}
+
+void GPIO_INITIAL(void)
+{
+    // FT64F0AX只有ANSELA，没有ANSELB和ANSELC
+    ANSELA = 0x00;  // 关闭PA口的模拟功能
+    
+    // 设置方向：PA口暂时不关心，PB全部输出
+    TRISA = 0x00;   // PA全部输出（暂时）
+    TRISB = 0x00;   // PB全部输出
+    
+    // 初始输出 - 共阳极：初始所有灯灭（输出1）
+    PORTA = 0x00;   // PA口输出0
+    PORTB = 0xFF;   // 所有输出1，LED灭
+    
+    // 延时确保稳定
+    for(volatile int i=0; i<1000; i++);
+}
